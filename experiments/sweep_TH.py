@@ -9,6 +9,9 @@ For each (K, h, N):
 
 Saves per-N results to results/sweep_Kh_N{N}.npz.
 Also saves VAN checkpoints (W, b per seed) to results/checkpoints_N{N}.npz.
+
+Supports chunked execution for multi-GPU parallelism:
+  python sweep_TH.py --N 32 --chunk 0 --n_chunks 4 --device cuda --batch_size 4000
 """
 
 import sys
@@ -23,7 +26,7 @@ from src.nmf.mean_field import solve as nmf_solve
 from src.van.train import train, TrainConfig
 
 
-def run_sweep(N, cfg=None):
+def run_sweep(N, cfg=None, chunk=None, n_chunks=None, device=None):
     if cfg is None:
         cfg = ExperimentConfig()
 
@@ -31,6 +34,18 @@ def run_sweep(N, cfg=None):
     h_grid = cfg.h_grid_positive  # Use symmetry
     nK, nh = len(K_grid), len(h_grid)
     n_seeds = cfg.n_seeds
+
+    chunked = chunk is not None and n_chunks is not None
+
+    # Build flat index list and select this chunk's subset
+    all_indices = [(i, j) for i in range(nK) for j in range(nh)]
+    if chunked:
+        my_indices = all_indices[chunk::n_chunks]  # interleaved round-robin
+        total = len(my_indices)
+        print(f"Chunk {chunk}/{n_chunks}: {total} points out of {len(all_indices)}")
+    else:
+        my_indices = all_indices
+        total = len(my_indices)
 
     # Allocate result arrays
     exact_f = np.zeros((nK, nh))
@@ -48,62 +63,105 @@ def run_sweep(N, cfg=None):
     van_nobias_W = np.zeros((nK, nh, n_seeds, N, N))
     van_nobias_b = np.zeros((nK, nh, n_seeds, N))
 
-    total = nK * nh
     count = 0
 
-    for i, K in enumerate(K_grid):
-        for j, h in enumerate(h_grid):
-            count += 1
-            print(f"N={N} [{count}/{total}] K={K:.3f}, h={h:.3f}")
+    for i, j in my_indices:
+        K = K_grid[i]
+        h = h_grid[j]
+        count += 1
+        prefix = f"[chunk {chunk}] " if chunked else ""
+        print(f"{prefix}N={N} [{count}/{total}] K={K:.3f}, h={h:.3f}")
 
-            # Exact
-            exact_f[i, j] = free_energy_per_spin(K, h, N)
-            exact_m[i, j] = exact_mag(K, h, N)
+        # Exact
+        exact_f[i, j] = free_energy_per_spin(K, h, N)
+        exact_m[i, j] = exact_mag(K, h, N)
 
-            # NMF
-            nmf_result = nmf_solve(K, h)
-            nmf_f[i, j] = nmf_result.free_energy_per_spin
-            nmf_m[i, j] = nmf_result.magnetization
+        # NMF
+        nmf_result = nmf_solve(K, h)
+        nmf_f[i, j] = nmf_result.free_energy_per_spin
+        nmf_m[i, j] = nmf_result.magnetization
 
-            # VAN with bias
-            f_bias = []
-            for seed in range(n_seeds):
-                tc = TrainConfig(
-                    N=N, K=K, h=h,
-                    use_bias=True,
-                    z2=(abs(h) < 1e-10),
-                    batch_size=cfg.batch_size, lr=cfg.lr,
-                    max_step=cfg.max_step, seed=seed,
-                    conv_tol=cfg.conv_tol, conv_window=cfg.conv_window,
-                )
-                result = train(tc)
-                f_bias.append(result.final_free_energy)
-                van_bias_W[i, j, seed] = result.parameters['W']
-                van_bias_b[i, j, seed] = result.parameters['b']
+        # VAN with bias
+        f_bias = []
+        for seed in range(n_seeds):
+            tc = TrainConfig(
+                N=N, K=K, h=h,
+                use_bias=True,
+                z2=(abs(h) < 1e-10),
+                batch_size=cfg.batch_size, lr=cfg.lr,
+                max_step=cfg.max_step, seed=seed,
+                conv_tol=cfg.conv_tol, conv_window=cfg.conv_window,
+                device=device,
+            )
+            result = train(tc)
+            f_bias.append(result.final_free_energy)
+            van_bias_W[i, j, seed] = result.parameters['W']
+            van_bias_b[i, j, seed] = result.parameters['b']
 
-            van_bias_f_mean[i, j] = np.mean(f_bias)
-            van_bias_f_std[i, j] = np.std(f_bias)
+        van_bias_f_mean[i, j] = np.mean(f_bias)
+        van_bias_f_std[i, j] = np.std(f_bias)
 
-            # VAN without bias
-            f_nobias = []
-            for seed in range(n_seeds):
-                tc = TrainConfig(
-                    N=N, K=K, h=h,
-                    use_bias=False,
-                    z2=(abs(h) < 1e-10),
-                    batch_size=cfg.batch_size, lr=cfg.lr,
-                    max_step=cfg.max_step, seed=seed,
-                    conv_tol=cfg.conv_tol, conv_window=cfg.conv_window,
-                )
-                result = train(tc)
-                f_nobias.append(result.final_free_energy)
-                van_nobias_W[i, j, seed] = result.parameters['W']
-                van_nobias_b[i, j, seed] = result.parameters['b']
+        # VAN without bias
+        f_nobias = []
+        for seed in range(n_seeds):
+            tc = TrainConfig(
+                N=N, K=K, h=h,
+                use_bias=False,
+                z2=(abs(h) < 1e-10),
+                batch_size=cfg.batch_size, lr=cfg.lr,
+                max_step=cfg.max_step, seed=seed,
+                conv_tol=cfg.conv_tol, conv_window=cfg.conv_window,
+                device=device,
+            )
+            result = train(tc)
+            f_nobias.append(result.final_free_energy)
+            van_nobias_W[i, j, seed] = result.parameters['W']
+            van_nobias_b[i, j, seed] = result.parameters['b']
 
-            van_nobias_f_mean[i, j] = np.mean(f_nobias)
-            van_nobias_f_std[i, j] = np.std(f_nobias)
+        van_nobias_f_mean[i, j] = np.mean(f_nobias)
+        van_nobias_f_std[i, j] = np.std(f_nobias)
 
-    # Mirror h < 0 results from h > 0 using symmetry
+    os.makedirs(cfg.results_dir, exist_ok=True)
+
+    if chunked:
+        # Save partial results — no mirroring, store chunk indices for merge
+        chunk_indices = [(i, j) for i, j in my_indices]
+        outpath = os.path.join(cfg.results_dir, f"sweep_Kh_N{N}_chunk{chunk}.npz")
+        np.savez(outpath,
+                 K_grid=K_grid,
+                 h_grid=h_grid,  # h >= 0 only
+                 chunk=chunk,
+                 n_chunks=n_chunks,
+                 chunk_indices_i=np.array([idx[0] for idx in chunk_indices]),
+                 chunk_indices_j=np.array([idx[1] for idx in chunk_indices]),
+                 exact_f=exact_f,
+                 exact_m=exact_m,
+                 nmf_f=nmf_f,
+                 nmf_m=nmf_m,
+                 van_bias_f_mean=van_bias_f_mean,
+                 van_bias_f_std=van_bias_f_std,
+                 van_nobias_f_mean=van_nobias_f_mean,
+                 van_nobias_f_std=van_nobias_f_std)
+        print(f"\nSaved chunk {chunk} to {outpath}")
+
+        # Save chunk checkpoints
+        ckpt_path = os.path.join(cfg.results_dir, f"checkpoints_N{N}_chunk{chunk}.npz")
+        np.savez(ckpt_path,
+                 K_grid=K_grid,
+                 h_grid=h_grid,
+                 chunk=chunk,
+                 n_chunks=n_chunks,
+                 chunk_indices_i=np.array([idx[0] for idx in chunk_indices]),
+                 chunk_indices_j=np.array([idx[1] for idx in chunk_indices]),
+                 van_bias_W=van_bias_W,
+                 van_bias_b=van_bias_b,
+                 van_nobias_W=van_nobias_W,
+                 van_nobias_b=van_nobias_b)
+        print(f"Saved chunk checkpoints to {ckpt_path}")
+
+        return outpath
+
+    # Non-chunked: mirror and save as before
     h_full = cfg.h_grid
     nh_full = len(h_full)
 
@@ -126,7 +184,6 @@ def run_sweep(N, cfg=None):
         return full
 
     # Save sweep results
-    os.makedirs(cfg.results_dir, exist_ok=True)
     outpath = os.path.join(cfg.results_dir, f"sweep_Kh_N{N}.npz")
     np.savez(outpath,
              K_grid=K_grid,
@@ -160,12 +217,29 @@ def run_sweep(N, cfg=None):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="VAN sweep over (K, h) grid")
     parser.add_argument("--N", type=int, default=8)
     parser.add_argument("--n_seeds", type=int, default=None,
                         help="Override number of seeds (default: from config, 5)")
+    parser.add_argument("--chunk", type=int, default=None,
+                        help="Chunk index for multi-GPU (0-indexed)")
+    parser.add_argument("--n_chunks", type=int, default=None,
+                        help="Total number of chunks")
+    parser.add_argument("--device", type=str, default=None,
+                        help="Device string (e.g. 'cuda', 'cuda:0', 'cpu')")
+    parser.add_argument("--batch_size", type=int, default=None,
+                        help="Override batch size (default: from config, 1000)")
+    parser.add_argument("--max_step", type=int, default=None,
+                        help="Override max training steps (default: from config, 5000)")
     args = parser.parse_args()
+
     cfg = ExperimentConfig()
     if args.n_seeds is not None:
         cfg.n_seeds = args.n_seeds
-    run_sweep(args.N, cfg=cfg)
+    if args.batch_size is not None:
+        cfg.batch_size = args.batch_size
+    if args.max_step is not None:
+        cfg.max_step = args.max_step
+
+    run_sweep(args.N, cfg=cfg, chunk=args.chunk, n_chunks=args.n_chunks,
+              device=args.device)

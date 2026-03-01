@@ -29,6 +29,7 @@ class TrainConfig:
     seed: int = 42
     conv_window: int = 100
     conv_tol: float = 1e-6
+    device: str = None
 
 
 @dataclass
@@ -54,7 +55,7 @@ def train(config: TrainConfig) -> TrainResult:
     TrainResult with dimensionless beta*f per spin
     """
     set_seed(config.seed)
-    device = get_device()
+    device = get_device(config.device)
 
     model = OneLayerVAN(config.N, use_bias=config.use_bias, z2=config.z2, dtype=DEFAULT_DTYPE).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
@@ -127,7 +128,7 @@ def train_and_evaluate_exact(config: TrainConfig):
     TrainResult with exact dimensionless beta*f per spin (no MC noise)
     """
     set_seed(config.seed)
-    device = get_device()
+    device = get_device(config.device)
 
     model = OneLayerVAN(config.N, use_bias=config.use_bias, z2=config.z2, dtype=DEFAULT_DTYPE).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)

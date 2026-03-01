@@ -12,8 +12,10 @@ def set_seed(seed):
     np.random.seed(seed)
 
 
-def get_device():
-    """Return the best available device."""
+def get_device(device=None):
+    """Return the best available device, or the specified one."""
+    if device is not None:
+        return torch.device(device)
     if torch.cuda.is_available():
         return torch.device('cuda')
     elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
