@@ -1,5 +1,15 @@
 # Project: VAN 1D Ising Model with External Field
 
+## Environment Setup
+
+**Always activate the virtual environment before running any Python command:**
+```bash
+source venv/bin/activate
+```
+This applies to running tests, experiments, plotting scripts, and any other Python invocation.
+
+---
+
 Variational Autoregressive Network (VAN) for the 1D Ising model in an external magnetic field, with exact analytical benchmarks.
 
 ## Project Structure
@@ -92,9 +102,7 @@ B_KK = -4w^2[c(2s^2+w^2)-2s^2D]/[D^3(c-D)^2]
 
 ## Testing
 ```bash
-cd /Users/carlmerrigan/DeckerCode/VAN1dIsingWithHField
-source venv/bin/activate
 pytest tests/ -v
 ```
 - `test_analytical_vs_sympy.py` cross-validates all 8 quantities across 10 diverse (K, h, N) points to rtol=1e-10
-- Python 3.13 venv with numpy, scipy, sympy, matplotlib, pytorch
+- Python 3.10+ venv with numpy, scipy, sympy, matplotlib, pytorch
