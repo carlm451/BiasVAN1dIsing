@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "van-1d-ising"
+version = "0.1.0"
+description = "VAN benchmark for 1D Ising model with external field"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
