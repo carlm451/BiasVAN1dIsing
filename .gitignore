@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# pytest
+.pytest_cache/
+
+# Claude Code local config
+.claude/
+
+# Generated outputs
+figures/output/
+results/
+
+# Archive
+archive/
+
+# Internal working docs
+STATUS.md
+EXPERIMENTS.md
+van-benchmark-paper-plan.md
+analyticTransferCalcs.md
+
+# LaTeX
+latex/
+*.aux
+*.log
+*.synctex.gz
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.out
+*.toc
